@@ -1,0 +1,19 @@
+cabal-version:      2.4
+name:               ppa
+version:            0.1.0
+author:             Renan
+maintainer:         renan.061@gmail.com
+extra-source-files: CHANGELOG.md
+
+executable ppa
+    main-is:          Main.hs
+    build-depends:    base
+    hs-source-dirs:   ./app
+    default-language: Haskell2010
+
+Test-Suite test-scanner
+    type:             exitcode-stdio-1.0
+    main-is:          ./scanner.hs
+    hs-source-dirs:   tests, app
+    build-depends:    base, HUnit
+    default-language: Haskell2010
