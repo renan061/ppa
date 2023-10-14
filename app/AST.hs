@@ -3,6 +3,7 @@ module AST
     B (..),
     S (..),
     Block (..),
+    Id,
     Label,
   )
 where
@@ -75,6 +76,7 @@ class Labels a where
   labels :: a -> [Label]
 
 instance Labels S where
+  labels Empty = []
   labels (Skip l) = [l]
   labels (Asg _ _ l) = [l]
   labels (Seq s1 s2) = labels s1 ++ labels s2

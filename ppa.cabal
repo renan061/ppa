@@ -3,7 +3,6 @@ name:               ppa
 version:            0.1.0
 author:             Renan
 maintainer:         renan.061@gmail.com
-extra-source-files: CHANGELOG.md
 
 executable ppa
     main-is:          Main.hs
@@ -13,7 +12,14 @@ executable ppa
 
 Test-Suite test-scanner
     type:             exitcode-stdio-1.0
-    main-is:          ./scanner.hs
+    main-is:          ./ScannerTest.hs
+    hs-source-dirs:   tests, app
+    build-depends:    base, HUnit
+    default-language: Haskell2010
+
+Test-Suite test-parser
+    type:             exitcode-stdio-1.0
+    main-is:          ./ParserTest.hs
     hs-source-dirs:   tests, app
     build-depends:    base, HUnit
     default-language: Haskell2010

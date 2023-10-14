@@ -17,22 +17,22 @@ import ParserMonad (Parser (Parser), apply, choice, failure, many0, many1)
 
 data Token
   = TokenNum Int
+  | TokenReserved String
   | TokenID String
   | TokenSymbol Char
-  | TokenReserved String
 
 instance Eq Token where
   (TokenNum n1) == (TokenNum n2) = n1 == n2
+  (TokenReserved s1) == (TokenReserved s2) = s1 == s2
   (TokenID s1) == (TokenID s2) = s1 == s2
   (TokenSymbol c1) == (TokenSymbol c2) = c1 == c2
-  (TokenReserved s1) == (TokenReserved s2) = s1 == s2
   _ == _ = False
 
 instance Show Token where
   show (TokenNum n) = show n
+  show (TokenReserved s) = "R:" ++ s
   show (TokenID s) = "I:" ++ s
   show (TokenSymbol c) = show c
-  show (TokenReserved s) = "R:" ++ s
 
 tokenNum :: Token -> Maybe Int
 tokenNum (TokenNum n) = Just n

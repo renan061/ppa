@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Use <$>" #-}
-module Parser (parserTest) where
+module Parser (parse) where
 
 import AST (A (..), B (..), Label, S (..))
 import Control.Applicative (Alternative ((<|>)))
@@ -13,16 +13,11 @@ import Prelude hiding (exp, seq)
 
 -------------------------------------------------------------------------------
 
-parserTest =
-  --  let input = "if [true]1 { while [x == true]2 {}; } else { [a = 1]3; } ;"
-  let input = "[a = 10]1; [a = 10]2; [b = 20]3; [c = a]4;"
-      -- let input = "[wh = 112]3"
-      f s = case apply stmt s of
-        Nothing -> "Failed"
-        Just (s, str)
-          | str == "" -> "Ok:\t\t" ++ show s
-          | otherwise -> "Did not parse... " ++ str
-   in do putStrLn ("Parsing:\t" ++ input); putStrLn (f input)
+parse :: String -> Either String S
+parse s = case apply stmt s of
+  Nothing -> Left "empty"
+  Just (stmt, "") -> Right stmt
+  Just (stmt, s) -> Left s
 
 -------------------------------------------------------------------------------
 
@@ -101,6 +96,14 @@ boolean = eq
 
 -------------------------------------------------------------------------------
 
+skip :: Parser S
+skip = do
+  expect (TokenSymbol '[')
+  expect (TokenReserved "skip")
+  expect (TokenSymbol ']')
+  l <- label
+  return $ Skip l
+
 asg :: Parser S
 asg = do
   expect (TokenSymbol '[')
@@ -131,7 +134,7 @@ stmt :: Parser S
 stmt =
   foldr Seq Empty <$> many0 (p <* expect (TokenSymbol ';'))
   where
-    p = asg <|> ifelse <|> while
+    p = skip <|> asg <|> ifelse <|> while
 
 -------------------------------------------------------------------------------
 
