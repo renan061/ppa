@@ -1,6 +1,7 @@
 module Main where
 
-import Parser (parserTest)
+import AST
+import DataFlow
 
 main :: IO ()
-main = parserTest
+main = putStrLn "Hey!"

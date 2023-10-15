@@ -18,12 +18,14 @@ data A -- arithmetic expressions
   = Num Int
   | AId Id
   | Add A A
+  deriving (Eq, Ord)
 
 data B -- boolean expressions
   = BTrue
   | BFalse
   | BId Id
   | Eq B B
+  deriving (Eq, Ord)
 
 data S -- statements
   = Empty
@@ -32,6 +34,7 @@ data S -- statements
   | Seq S S
   | If Label B S S
   | While Label B S
+  deriving (Eq, Ord)
 
 -------------------------------------------------------------------------------
 
@@ -72,21 +75,8 @@ instance Show S where
 
 -------------------------------------------------------------------------------
 
-class Labels a where
-  labels :: a -> [Label]
-
-instance Labels S where
-  labels Empty = []
-  labels (Skip l) = [l]
-  labels (Asg _ _ l) = [l]
-  labels (Seq s1 s2) = labels s1 ++ labels s2
-  labels (If l b s1 s2) = l : labels s1 ++ labels s2
-  labels (While l _ s) = l : labels s
-
 data Block
-  = Stmt S
-  | Cond Label B
-
-instance Labels Block where
-  labels (Stmt s) = labels s
-  labels (Cond l _) = [l]
+  = BlockSkip Label
+  | BlockAsg Id A Label
+  | BlockCond B Label
+  deriving (Eq, Ord)

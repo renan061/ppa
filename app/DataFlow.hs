@@ -1,11 +1,23 @@
-module DataFlow (initial, final, blocks, fflow, bflow) where
+{-# LANGUAGE TupleSections #-}
+
+module DataFlow () where
 
 import AST
-import Data.Maybe (isJust, mapMaybe)
+import Data.Set (Set, insert, singleton, (\\))
+import qualified Data.Set as Set
+import Data.Tuple (swap)
 
 -- question mark label
 q :: Label
 q = -1
+
+(<+>) :: (Ord a) => a -> Set a -> Set a
+(<+>) = insert
+
+(<++>) :: (Semigroup a) => a -> a -> a
+(<++>) = (<>)
+
+infixr 5 <+>
 
 -------------------------------------------------------------------------------
 
@@ -16,58 +28,99 @@ initial (Seq s _) = initial s
 initial (If l _ _ _) = l
 initial (While l _ _) = l
 
-final :: S -> [Label]
-final (Skip l) = [l]
-final (Asg id _ l) = [l]
+final :: S -> Set Label
+final (Skip l) = singleton l
+final (Asg id _ l) = singleton l
 final (Seq _ s) = final s
-final (If _ _ s1 s2) = final s1 ++ final s2
-final (While l _ _) = [l]
+final (If _ _ s1 s2) = final s1 <++> final s2
+final (While l _ _) = singleton l
 
-blocks :: S -> [Block]
-blocks s@Skip {} = [Stmt s]
-blocks s@Asg {} = [Stmt s]
-blocks (Seq s1 s2) = blocks s1 ++ blocks s2
-blocks (If l b s1 s2) = Cond l b : blocks s1 ++ blocks s2
-blocks (While l b s) = Cond l b : blocks s
+blocks :: S -> Set Block
+blocks (Skip l) = singleton (BlockSkip l)
+blocks (Asg x a l) = singleton (BlockAsg x a l)
+blocks (Seq s1 s2) = blocks s1 <++> blocks s2
+blocks (If l b s1 s2) = BlockCond b l <+> blocks s1 <++> blocks s2
+blocks (While l b s) = BlockCond b l <+> blocks s
 
-fflow :: S -> [(Label, Label)]
-fflow Skip {} = []
-fflow Asg {} = []
-fflow (Seq s1 s2) = fflow s1 ++ fflow s2 ++ [(f, ini) | f <- final s1]
+blockLabel :: Block -> Label
+blockLabel (BlockSkip l) = l
+blockLabel (BlockAsg _ _ l) = l
+blockLabel (BlockCond _ l) = l
+
+blockLabels :: Set Block -> Set Label
+blockLabels = Set.map blockLabel
+
+labels :: S -> Set Label
+labels s = Set.map blockLabel (blocks s)
+
+fflow :: S -> Set (Label, Label)
+fflow Skip {} = Set.empty
+fflow Asg {} = Set.empty
+fflow (Seq s1 s2) = fflow s1 <++> fflow s2 <++> edges
   where
-    ini = initial s2
-fflow (If l _ s1 s2) = fflow s1 ++ fflow s2 ++ [(l, ini1), (l, ini2)]
+    edges = Set.map (,initial s2) (final s1)
+fflow (If l _ s1 s2) = fflow s1 <++> fflow s2 <++> edges
   where
-    ini1 = initial s1
-    ini2 = initial s2
-fflow (While l b s) = (l, initial s) : fflow s ++ [(f, l) | f <- final s]
+    edges = (l, initial s2) <+> (l, initial s1) <+> Set.empty
+fflow (While l b s) = (l, initial s) <+> fflow s <++> edges
+  where
+    edges = Set.map (,l) (final s)
 
-bflow :: S -> [(Label, Label)]
-bflow s = [(l2, l1) | (l1, l2) <- fflow s]
+bflow :: S -> Set (Label, Label)
+bflow s = Set.map swap (fflow s)
+
+-------------------------------------------------------------------------------
+
+fvA :: A -> Set Id
+fvA (AId x) = singleton x
+fvA (Add a1 a2) = fvA a1 <++> fvA a2
+fvA _ = Set.empty
+
+fvB :: B -> Set Id
+fvB (BId x) = singleton x
+fvB (Eq b1 b2) = fvB b1 <++> fvB b2
+fvB _ = Set.empty
+
+fv :: S -> Set Id
+fv (Asg x a _) = singleton x <++> fvA a
+fv (Seq s1 s2) = fv s1 <++> fv s2
+fv (If _ b s1 s2) = fvB b <++> fv s1 <++> fv s2
+fv (While _ b s) = fvB b <++> fv s
+fv _ = Set.empty
 
 -------------------------------------------------------------------------------
 
 -- reaching definitions
 
-killRD :: [Block] -> Block -> [(Id, Label)]
-killRD blocks (Stmt Empty) = []
-killRD blocks (Stmt (Skip l)) = []
-killRD blocks (Stmt (Asg x a l)) = (x, q) : onlyAsgX x blocks
-killRD blocks (Stmt (Seq s1 s2)) = []
-killRD blocks (Stmt (If l b s1 s2)) = []
-killRD blocks (Stmt (While l _ s)) = []
-killRD blocks (Cond l b) = []
-
-onlyAsg :: [Block] -> [Block]
-onlyAsg = filter f
+killRD :: Set Block -> Block -> Set (Id, Label)
+killRD blocks (BlockSkip _) = Set.empty
+killRD blocks (BlockAsg x _ _) = (x, q) <+> Set.map (x,) (f blocks)
   where
-    f (Stmt (Asg {})) = True
-    f _ = False
+    f = foldMap g
+    g (BlockAsg x' _ l)
+      | x == x' = singleton l
+      | otherwise = Set.empty
+    g _ = Set.empty
 
-onlyAsgX :: Id -> [Block] -> [(Id, Label)]
-onlyAsgX x = mapMaybe f . onlyAsg
+genRD :: Block -> Set (Id, Label)
+genRD (BlockSkip _) = Set.empty
+genRD (BlockAsg x _ l) = singleton (x, l)
+genRD (BlockCond _ _) = Set.empty
+
+entryRD :: S -> Label -> Set (Id, Label)
+entryRD s l
+  | l == initial s = Set.map (,q) (fv s)
+  | otherwise = foldMap (exitRD s) exits
   where
-    f (Stmt (Asg x' _ l))
-      | x == x' = Just (x, l)
-      | otherwise = Nothing
-    f _ = Nothing
+    exits = Set.map fst (Set.filter ((==) l . snd) (fflow s))
+
+exitRD :: S -> Label -> Set (Id, Label)
+exitRD s l = set1 <++> set2
+  where
+    set1 = foldMap (\block -> entryRDl \\ killRD bs block) bs
+    set2 = foldMap genRD bs
+
+    entryRDl = entryRD s l
+
+    bs = blocks s
+    bl = Set.filter (l ==) (blockLabels bs)

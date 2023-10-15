@@ -6,7 +6,8 @@ maintainer:         renan.061@gmail.com
 
 executable ppa
     main-is:          Main.hs
-    build-depends:    base
+    build-depends:    base, containers
+    other-modules:    AST, DataFlow
     hs-source-dirs:   ./app
     default-language: Haskell2010
 
