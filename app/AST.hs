@@ -28,8 +28,7 @@ data B -- boolean expressions
   deriving (Eq, Ord)
 
 data S -- statements
-  = Empty
-  | Skip Label
+  = Skip Label
   | Asg Id A Label
   | Seq S S
   | If Label B S S
@@ -41,7 +40,7 @@ data S -- statements
 instance Show A where
   show (Num n) = show n
   show (AId x) = x
-  show (Add a1 a2) = show a1 ++ " = " ++ show a2
+  show (Add a1 a2) = show a1 ++ " + " ++ show a2
 
 instance Show B where
   show BTrue = "true"
@@ -50,7 +49,6 @@ instance Show B where
   show (Eq b1 b2) = show b1 ++ " == " ++ show b2
 
 instance Show S where
-  show Empty = "_"
   show (Skip l) = "[skip]" ++ show l
   show (Asg x a l) = "[" ++ x ++ " = " ++ show a ++ "]" ++ show l
   show (Seq s1 s2) = show s1 ++ "; " ++ show s2
@@ -79,4 +77,4 @@ data Block
   = BlockSkip Label
   | BlockAsg Id A Label
   | BlockCond B Label
-  deriving (Eq, Ord)
+  deriving (Show, Eq, Ord)

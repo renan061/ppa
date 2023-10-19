@@ -4,6 +4,8 @@ import AST (S)
 import Parser (parse)
 import Test.HUnit (assertBool, assertFailure)
 
+--  FAILING: while [x == 1]3 {};"
+
 main = do
   run "[a = 2]1;"
   run "[skip]2;"

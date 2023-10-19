@@ -1,23 +1,24 @@
-{-# LANGUAGE TupleSections #-}
-
-module DataFlow () where
+module DataFlow
+  ( initial,
+    labels,
+    final,
+    blocks,
+    reachingDefinitions,
+    fflow,
+    bflow,
+  )
+where
 
 import AST
-import Data.Set (Set, insert, singleton, (\\))
-import qualified Data.Set as Set
-import Data.Tuple (swap)
+import Data.Matrix (Matrix, matrix)
+import qualified Data.Matrix as M
+import Set (unique, (<++>), (<:>), (<\\>))
+
+-------------------------------------------------------------------------------
 
 -- question mark label
 q :: Label
 q = -1
-
-(<+>) :: (Ord a) => a -> Set a -> Set a
-(<+>) = insert
-
-(<++>) :: (Semigroup a) => a -> a -> a
-(<++>) = (<>)
-
-infixr 5 <+>
 
 -------------------------------------------------------------------------------
 
@@ -28,99 +29,119 @@ initial (Seq s _) = initial s
 initial (If l _ _ _) = l
 initial (While l _ _) = l
 
-final :: S -> Set Label
-final (Skip l) = singleton l
-final (Asg id _ l) = singleton l
+final :: S -> [Label]
+final (Skip l) = [l]
+final (Asg id _ l) = [l]
 final (Seq _ s) = final s
 final (If _ _ s1 s2) = final s1 <++> final s2
-final (While l _ _) = singleton l
+final (While l _ _) = [l]
 
-blocks :: S -> Set Block
-blocks (Skip l) = singleton (BlockSkip l)
-blocks (Asg x a l) = singleton (BlockAsg x a l)
+blocks :: S -> [Block]
+blocks (Skip l) = [BlockSkip l]
+blocks (Asg x a l) = [BlockAsg x a l]
 blocks (Seq s1 s2) = blocks s1 <++> blocks s2
-blocks (If l b s1 s2) = BlockCond b l <+> blocks s1 <++> blocks s2
-blocks (While l b s) = BlockCond b l <+> blocks s
+blocks (If l b s1 s2) = BlockCond b l <:> blocks s1 <++> blocks s2
+blocks (While l b s) = BlockCond b l <:> blocks s
 
 blockLabel :: Block -> Label
 blockLabel (BlockSkip l) = l
 blockLabel (BlockAsg _ _ l) = l
 blockLabel (BlockCond _ l) = l
 
-blockLabels :: Set Block -> Set Label
-blockLabels = Set.map blockLabel
+blockLabels :: [Block] -> [Label]
+blockLabels = unique . map blockLabel
 
-labels :: S -> Set Label
-labels s = Set.map blockLabel (blocks s)
+labels :: S -> [Label]
+labels = unique . map blockLabel . blocks
 
-fflow :: S -> Set (Label, Label)
-fflow Skip {} = Set.empty
-fflow Asg {} = Set.empty
-fflow (Seq s1 s2) = fflow s1 <++> fflow s2 <++> edges
-  where
-    edges = Set.map (,initial s2) (final s1)
-fflow (If l _ s1 s2) = fflow s1 <++> fflow s2 <++> edges
-  where
-    edges = (l, initial s2) <+> (l, initial s1) <+> Set.empty
-fflow (While l b s) = (l, initial s) <+> fflow s <++> edges
-  where
-    edges = Set.map (,l) (final s)
+fflow :: S -> [(Label, Label)]
+fflow Skip {} = []
+fflow Asg {} = []
+fflow (Seq s1 s2) =
+  fflow s1
+    <++> fflow s2
+    <++> [(l, initial s2) | l <- final s1]
+fflow (If l _ s1 s2) =
+  (l, initial s1)
+    <:> (l, initial s2)
+    <:> fflow s1
+    <++> fflow s2
+fflow (While l b s) =
+  (l, initial s)
+    <:> fflow s
+    <++> [(l', l) | l' <- final s]
 
-bflow :: S -> Set (Label, Label)
-bflow s = Set.map swap (fflow s)
+bflow :: S -> [(Label, Label)]
+bflow s = unique [(l, l') | (l', l) <- fflow s]
 
 -------------------------------------------------------------------------------
 
-fvA :: A -> Set Id
-fvA (AId x) = singleton x
+fvA :: A -> [Id]
+fvA (AId x) = [x]
 fvA (Add a1 a2) = fvA a1 <++> fvA a2
-fvA _ = Set.empty
+fvA _ = []
 
-fvB :: B -> Set Id
-fvB (BId x) = singleton x
+fvB :: B -> [Id]
+fvB (BId x) = [x]
 fvB (Eq b1 b2) = fvB b1 <++> fvB b2
-fvB _ = Set.empty
+fvB _ = []
 
-fv :: S -> Set Id
-fv (Asg x a _) = singleton x <++> fvA a
+fv :: S -> [Id]
+fv (Asg x a _) = x <:> fvA a
 fv (Seq s1 s2) = fv s1 <++> fv s2
 fv (If _ b s1 s2) = fvB b <++> fv s1 <++> fv s2
 fv (While _ b s) = fvB b <++> fv s
-fv _ = Set.empty
+fv _ = []
 
 -------------------------------------------------------------------------------
 
 -- reaching definitions
 
-killRD :: Set Block -> Block -> Set (Id, Label)
-killRD blocks (BlockSkip _) = Set.empty
-killRD blocks (BlockAsg x _ _) = (x, q) <+> Set.map (x,) (f blocks)
+killRD :: S -> Block -> [(Id, Label)]
+killRD _ (BlockSkip _) = []
+killRD s (BlockAsg x _ _) = (x, q) <:> [(x, l') | l' <- (f . blocks) s]
   where
     f = foldMap g
-    g (BlockAsg x' _ l)
-      | x == x' = singleton l
-      | otherwise = Set.empty
-    g _ = Set.empty
+    g (BlockAsg x' _ l')
+      | x == x' = [l']
+      | otherwise = []
+    g _ = []
+killRD _ (BlockCond _ _) = []
 
-genRD :: Block -> Set (Id, Label)
-genRD (BlockSkip _) = Set.empty
-genRD (BlockAsg x _ l) = singleton (x, l)
-genRD (BlockCond _ _) = Set.empty
+genRD :: Block -> [(Id, Label)]
+genRD (BlockSkip _) = []
+genRD (BlockAsg x _ l) = [(x, l)]
+genRD (BlockCond _ _) = []
 
-entryRD :: S -> Label -> Set (Id, Label)
-entryRD s l
-  | l == initial s = Set.map (,q) (fv s)
-  | otherwise = foldMap (exitRD s) exits
+entryRD :: S -> (Label -> [(Id, Label)]) -> Label -> [(Id, Label)]
+entryRD s exitF l
+  | l == initial s = unique [(x, q) | x <- fv s]
+  | otherwise = (unique . concat) [exitF l1 | (l1, l2) <- fflow s, l == l2]
+
+exitRD :: S -> (Label -> [(Id, Label)]) -> Label -> [(Id, Label)]
+exitRD s entryF l = (entryF l <\\> kills) <++> gens
   where
-    exits = Set.map fst (Set.filter ((==) l . snd) (fflow s))
+    blocksL = [block | block <- blocks s, l == blockLabel block]
+    kills = unique $ concatMap (killRD s) blocksL
+    gens = unique $ concatMap genRD blocksL
 
-exitRD :: S -> Label -> Set (Id, Label)
-exitRD s l = set1 <++> set2
+-------------------------------------------------------------------------------
+
+fixpoint :: (Eq a) => (a -> a) -> a -> a
+fixpoint f x = if x == fx then x else fixpoint f fx
   where
-    set1 = foldMap (\block -> entryRDl \\ killRD bs block) bs
-    set2 = foldMap genRD bs
+    fx = f x
 
-    entryRDl = entryRD s l
+onceRD :: S -> Matrix [(Id, Label)] -> Matrix [(Id, Label)]
+onceRD s m = M.mapPos f m
+  where
+    entry = entryRD s (\l -> M.getElem l 1 m)
+    exit = exitRD s (\l -> M.getElem l 2 m)
+    f (l, 1) _ = entry l
+    f (l, 2) _ = exit l
+    f _ v = v -- unreachable
 
-    bs = blocks s
-    bl = Set.filter (l ==) (blockLabels bs)
+reachingDefinitions :: S -> Matrix [(Id, Label)]
+reachingDefinitions s = fixpoint (onceRD s) start
+  where
+    start = matrix (length $ labels s) 2 (const [])
