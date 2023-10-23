@@ -1,24 +1,12 @@
-module DataFlow
-  ( initial,
-    labels,
-    final,
-    blocks,
-    reachingDefinitions,
-    fflow,
-    bflow,
-  )
-where
+{-# LANGUAGE TupleSections #-}
+
+module DataFlow (module DataFlow) where
 
 import AST
+import Data.Array (Array, array, (!), (//))
 import Data.Matrix (Matrix, matrix)
 import qualified Data.Matrix as M
-import Set (unique, (<++>), (<:>), (<\\>))
-
--------------------------------------------------------------------------------
-
--- question mark label
-q :: Label
-q = -1
+import Set (isSubsetOf, union, unique, (<++>), (<:>), (<\\>))
 
 -------------------------------------------------------------------------------
 
@@ -42,17 +30,6 @@ blocks (Asg x a l) = [BlockAsg x a l]
 blocks (Seq s1 s2) = blocks s1 <++> blocks s2
 blocks (If l b s1 s2) = BlockCond b l <:> blocks s1 <++> blocks s2
 blocks (While l b s) = BlockCond b l <:> blocks s
-
-blockLabel :: Block -> Label
-blockLabel (BlockSkip l) = l
-blockLabel (BlockAsg _ _ l) = l
-blockLabel (BlockCond _ l) = l
-
-blockLabels :: [Block] -> [Label]
-blockLabels = unique . map blockLabel
-
-labels :: S -> [Label]
-labels = unique . map blockLabel . blocks
 
 fflow :: S -> [(Label, Label)]
 fflow Skip {} = []
@@ -95,53 +72,103 @@ fv _ = []
 
 -------------------------------------------------------------------------------
 
--- reaching definitions
+type Kill a = Block -> [a]
 
-killRD :: S -> Block -> [(Id, Label)]
+type Gen a = Block -> [a]
+
+only :: [a] -> a
+only [a] = a
+only _ = error "list has more than one element"
+
+killGen :: (Ord a) => Kill a -> Gen a -> [Block] -> Label -> [a] -> [a]
+killGen kill gen blocks l x =
+  let block = only [block | block <- blocks, l == label block]
+   in (x <\\> kill block) <++> gen block
+
+-------------------------------------------------------------------------------
+
+killRD :: [Block] -> Kill (Id, Label)
 killRD _ (BlockSkip _) = []
-killRD s (BlockAsg x _ _) = (x, q) <:> [(x, l') | l' <- (f . blocks) s]
+killRD allBlocks (BlockAsg x _ _) = (x, q) <:> foldMap f allBlocks
   where
-    f = foldMap g
-    g (BlockAsg x' _ l')
-      | x == x' = [l']
+    f (BlockAsg x' _ l')
+      | x == x' = [(x, l')]
       | otherwise = []
-    g _ = []
+    f _ = []
 killRD _ (BlockCond _ _) = []
 
-genRD :: Block -> [(Id, Label)]
+genRD :: Gen (Id, Label)
 genRD (BlockSkip _) = []
 genRD (BlockAsg x _ l) = [(x, l)]
 genRD (BlockCond _ _) = []
 
-entryRD :: S -> (Label -> [(Id, Label)]) -> Label -> [(Id, Label)]
-entryRD s exitF l
-  | l == initial s = unique [(x, q) | x <- fv s]
-  | otherwise = (unique . concat) [exitF l1 | (l1, l2) <- fflow s, l == l2]
+-------------------------------------------------------------------------------
 
-exitRD :: S -> (Label -> [(Id, Label)]) -> Label -> [(Id, Label)]
-exitRD s entryF l = (entryF l <\\> kills) <++> gens
+type Flow = [(Label, Label)]
+
+type Worklist = Flow
+
+type Analysis a = Array Int [a]
+
+type TransferFunction a = Label -> [a] -> [a]
+
+fTF :: (Ord a) => Kill a -> Gen a -> [Block] -> Label -> [a] -> [a]
+fTF kill gen blocks l as = (as <\\> kills) <++> gens
   where
-    blocksL = [block | block <- blocks s, l == blockLabel block]
-    kills = unique $ concatMap (killRD s) blocksL
-    gens = unique $ concatMap genRD blocksL
+    bs = filter ((==) l . label) blocks
+    kills = unique $ concatMap kill bs
+    gens = unique $ concatMap gen bs
+
+mfp1 :: [Label] -> [Label] -> [a] -> [a] -> Analysis a
+mfp1 labels extremalLabels extremalValues bottom =
+  array (1, length labels + 1) (map f labels)
+  where
+    f l = (l, if l `elem` extremalLabels then extremalValues else bottom)
+
+mfp2 :: (Ord a) => Flow -> TransferFunction a -> Worklist -> Analysis a -> Analysis a
+mfp2 _ _ [] analysis = analysis
+mfp2 flow f ((l, l') : worklist) analysis
+  -- TODO: isSubsetOf
+  | f l (analysis ! l) `isSubsetOf` (analysis ! l') =
+      mfp2 flow f worklist analysis
+  | otherwise =
+      let v' = analysis ! l' `union` f l (analysis ! l) -- TODO: union
+          analysis = analysis // [(l', v')]
+          worklist = [(l', l'') | (l_, l'') <- flow, l_ == l'] ++ worklist
+       in mfp2 flow f worklist analysis
+
+mfp3 :: (Ord a) => [Label] -> TransferFunction a -> Analysis a -> [([a], [a])]
+mfp3 labels f analysis = map g [1 .. length labels]
+  where
+    g l = let x = analysis ! l in (x, f l x)
+
+mfp labels flow f extremalLabels extremalValues bottom =
+  let worklist = flow
+      analysis0 = mfp1 labels extremalLabels extremalValues bottom
+      analysis = mfp2 flow f worklist analysis0
+   in mfp3 labels f analysis
 
 -------------------------------------------------------------------------------
 
-fixpoint :: (Eq a) => (a -> a) -> a -> a
-fixpoint f x = if x == fx then x else fixpoint f fx
-  where
-    fx = f x
+killGenRD blocks = killGen (killRD blocks) genRD blocks
 
-onceRD :: S -> Matrix [(Id, Label)] -> Matrix [(Id, Label)]
-onceRD s m = M.mapPos f m
-  where
-    entry = entryRD s (\l -> M.getElem l 1 m)
-    exit = exitRD s (\l -> M.getElem l 2 m)
-    f (l, 1) _ = entry l
-    f (l, 2) _ = exit l
-    f _ v = v -- unreachable
+flowRD = fflow
 
-reachingDefinitions :: S -> Matrix [(Id, Label)]
-reachingDefinitions s = fixpoint (onceRD s) start
+extremalLabelsRD s = [initial s]
+
+extremalValuesRD s = map (,q) (fv s)
+
+bottomRD = []
+
+mfpRD :: S -> [([(Id, Label)], [(Id, Label)])]
+mfpRD s =
+  mfp
+    labels
+    (flowRD s)
+    (killGenRD blocks')
+    (extremalLabelsRD s)
+    (extremalValuesRD s)
+    bottomRD
   where
-    start = matrix (length $ labels s) 2 (const [])
+    blocks' = blocks s
+    labels = map label blocks'

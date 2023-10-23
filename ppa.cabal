@@ -23,7 +23,7 @@ maintainer:         renan.061@gmail.com
 Test-Suite test-data-flow
     type:             exitcode-stdio-1.0
     main-is:          DataFlowTest.hs
-    build-depends:    base, containers, matrix, HUnit
+    build-depends:    base, containers, array, matrix, HUnit
     other-modules:    AST, DataFlow, Parser, ParserMonad, Scanner, Set
     hs-source-dirs:   app, tests
     default-language: Haskell2010

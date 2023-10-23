@@ -1,19 +1,11 @@
 module Main (main) where
 
 import AST (A (..), B (..), Block (..), S)
+import Data.Function ((&))
 import Data.List (sort)
-import Data.Matrix (fromLists, prettyMatrix)
 import DataFlow
-  ( bflow,
-    blocks,
-    fflow,
-    final,
-    initial,
-    labels,
-    reachingDefinitions,
-  )
 import Parser (parseOrFail)
-import Test.HUnit (Test, assertFailure, runTestTTAndExit, (~=?))
+import Test.HUnit (Test (..), assertFailure, runTestTTAndExit, (~=?))
 
 stmt =
   parseOrFail
@@ -22,13 +14,17 @@ stmt =
 main =
   do
     print stmt
-    -- runTestTT (testInitial stmt)
-    -- runTestTT (testFinal stmt)
-    -- runTestTTAndExit (testBlocks stmt)
-    -- runTestTTAndExit (testLabels stmt)
-    -- runTestTTAndExit (testFowardFlow stmt)
-    -- runTestTTAndExit (testBackwardFlow stmt)
-    runTestTTAndExit (testRD stmt)
+    (runTestTTAndExit . TestList . map (stmt &))
+      [ testInitial,
+        testFinal,
+        testBlocks,
+        testFowardFlow,
+        testBackwardFlow,
+        testFV,
+        testKillRD,
+        testGenRD,
+        testRD
+      ]
 
 testInitial :: S -> Test
 testInitial = (1 ~=?) . initial
@@ -47,12 +43,6 @@ testBlocks stmt = sort expected ~=? sort actual
         BlockAsg "y" (Add (AId "x") (AId "y")) 4,
         BlockAsg "x" (Add (AId "x") (Num 1)) 5
       ]
-
-testLabels :: S -> Test
-testLabels stmt = sort expected ~=? sort actual
-  where
-    actual = labels stmt
-    expected = [1, 2, 3, 4, 5]
 
 testFowardFlow :: S -> Test
 testFowardFlow stmt = sort expected ~=? sort actual
@@ -78,13 +68,38 @@ testBackwardFlow stmt = sort expected ~=? sort actual
         (3, 5)
       ]
 
+testFV :: S -> Test
+testFV stmt = sort expected ~=? sort actual
+  where
+    actual = fv stmt
+    expected = ["x", "y"]
+
+testKillRD :: S -> Test
+testKillRD stmt = TestList (map f cases)
+  where
+    f (block, expected) = sort expected ~=? sort (killRD (blocks stmt) block)
+    cases =
+      [ (BlockAsg "x" (Num 5) 1, [("x", -1), ("x", 1), ("x", 5)]),
+        (BlockAsg "y" (Num 1) 2, [("y", -1), ("y", 2), ("y", 4)]),
+        (BlockCond BFalse 3, []),
+        (BlockAsg "y" (Add (AId "x") (AId "y")) 4, [("y", -1), ("y", 2), ("y", 4)]),
+        (BlockAsg "x" (Add (AId "x") (Num 1)) 5, [("x", -1), ("x", 1), ("x", 5)])
+      ]
+
+testGenRD :: S -> Test
+testGenRD _ = TestList (map f cases)
+  where
+    f (block, expected) = sort expected ~=? sort (genRD block)
+    cases =
+      [ (BlockAsg "x" (Num 5) 1, [("x", 1)]),
+        (BlockAsg "y" (Num 1) 2, [("y", 2)]),
+        (BlockCond BFalse 3, []),
+        (BlockAsg "y" (Add (AId "x") (AId "y")) 4, [("y", 4)]),
+        (BlockAsg "x" (Add (AId "x") (Num 1)) 5, [("x", 5)])
+      ]
+
 testRD :: S -> Test
 testRD stmt = expected ~=? actual
   where
-    actual = reachingDefinitions stmt
-    expected =
-      fromLists
-        [ [],
-          [],
-          []
-        ]
+    actual = mfpRD stmt
+    expected = []

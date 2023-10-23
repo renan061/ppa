@@ -5,12 +5,20 @@ module AST
     Block (..),
     Id,
     Label,
+    Labeled (..),
+    q,
   )
 where
 
-type Label = Int
+import Set ((<++>))
 
 type Id = String
+
+type Label = Int
+
+-- question mark label
+q :: Label
+q = -1
 
 -------------------------------------------------------------------------------
 
@@ -78,3 +86,13 @@ data Block
   | BlockAsg Id A Label
   | BlockCond B Label
   deriving (Show, Eq, Ord)
+
+-------------------------------------------------------------------------------
+
+class Labeled a where
+  label :: a -> Label
+
+instance Labeled Block where
+  label (BlockSkip l) = l
+  label (BlockAsg _ _ l) = l
+  label (BlockCond _ l) = l
